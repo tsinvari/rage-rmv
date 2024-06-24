@@ -1,0 +1,303 @@
+---
+
+- hosts: EMSA
+  become: true
+  vars_prompt:
+  - name: nameVM
+    prompt: "Enter the name of the SDWAN VM:"
+    private: false
+
+  - name: envIP
+    prompt: "Choose environment (prod, dev or sandbox):"
+    private: false
+
+  # - name: vesselNumber
+  #   prompt: "What's the vessel Number:"
+  #   private: false
+  vars:
+    vm_name: TCO_server
+    WiFi_dir: /var/lib/libvirt/images/WiFi
+    SSR_dir: /var/lib/libvirt/images/SSR
+    sites_available: /etc/nginx/sites-available
+    sites_enabled: /etc/nginx/sites-enabled
+
+  tasks:
+    - name: Add Netplan configuration
+      copy:
+        dest: /etc/netplan/01-netcfg.yaml
+        content: |
+          network:
+            version: 2
+            ethernets:
+              enp1s0:
+                dhcp4: false
+              enp2s0:
+                dhcp4: false
+              enp3s0:
+                dhcp4: false
+              enp4s0:
+                dhcp4: false
+              enp5s0:
+                dhcp4: false
+              enp6s0:
+                dhcp4: false
+            bridges:
+              brwan0:
+                interfaces:
+                  - enp1s0
+                addresses:
+                  - 192.168.122.20/24
+                routes: 
+                  - to: default
+                    via: 192.168.122.1
+                nameservers:
+                  addresses:
+                    - 8.8.8.8
+                    - 8.8.4.4
+              brwan1:
+                interfaces:
+                  - enp2s0
+                dhcp4: true
+              brmgnt:
+                interfaces:
+                  - enp3s0
+                  - enp4s0
+                addresses:
+                  - 192.168.0.3/24
+              brlan:
+                interfaces:
+                  - enp5s0
+                  - enp6s0
+                addresses:
+                  - 192.168.12.99/24
+                dhcp4: false
+      tags: apply_netplan
+
+    - name: Apply Netplan configuration
+      command: netplan apply
+      tags: apply_netplan
+
+    - name: Create directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ SSR_dir }}"
+        - "{{ WiFi_dir }}"
+      tags:
+        - create_directories
+
+    - name: Update apt packages
+      apt:
+        update_cache: yes
+      tags: update_apt
+
+    - name: Upgrade apt packages
+      apt:
+        upgrade: dist
+      tags: upgrade_apt
+  
+    - name: Install KVM packages
+      apt:
+        name:
+          - qemu-kvm
+          - virtinst
+          - bridge-utils
+          - virt-manager
+          - libvirt-daemon
+          - genisoimage
+          - net-tools
+        state: present
+        update_cache: yes
+      tags: install_kvm
+
+    - name: Add user to libvirt group
+      user:
+        name: "{{ ansible_user }}"
+        groups: libvirt
+        append: yes
+      tags: add_user_libvirt
+
+    - name: Install Docker
+      apt:
+        name: docker.io
+        state: present
+        update_cache: yes
+      tags: install_docker
+
+    - name: Add user to docker group
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+      tags: add_user_docker
+
+    # - name: Pull Docker unifi-controllerimage
+    #   docker_image:
+    #     name: linuxserver/unifi-controller
+    #     source: pull
+    #   tags: pull_docker_image
+
+    # - name: Run Unifi Controller container
+    #   docker_container:
+    #     name: unifi-controller
+    #     image: linuxserver/unifi-controller
+    #     state: started
+    #     restart_policy: unless-stopped
+    #     network_mode: host
+    #     detach: true
+    #   tags: run_docker_container
+
+    - name: Create SSR user-data and meta-data files from templates
+      template:
+        src: "{{ item.src }}"
+        dest: "{{ SSR_dir }}/{{ item.dest }}"
+      loop:
+        - { src: "SSR/meta-data.j2", dest: "meta-data" }
+        - { src: "SSR/user-data.j2", dest: "user-data" }
+      vars:
+        vm_name: "{{ nameVM }}"
+        IP_conductor: "{{ hostvars[inventory_hostname][''+envIP] }}"
+      tags:
+        - data_files
+
+    - name: Copying SSR files to host
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+      with_items:
+        - { src: "{{ hostvars[inventory_hostname]['SSRimage'] }}", dest: '{{ SSR_dir }}/{{ nameVM }}.qcow2' }
+        - { src: '/home/rene/Documents/rage-rmv/SSR/network-config', dest: '{{ SSR_dir }}' }
+      tags: copy_SSR_files
+
+    - name: Generate SSR ISO image
+      command: genisoimage -output {{ SSR_dir }}/cidata.iso -V cidata -r -J {{ SSR_dir }}/user-data {{ SSR_dir }}/meta-data {{ SSR_dir }}/network-config
+      tags: generate_SSR_iso
+  
+    - name: Create SSR VM using virt-install
+      command: >
+        virt-install
+        --name {{ nameVM }}
+        --ram 4096
+        --vcpus 4
+        --autostart 
+        --disk path={{ SSR_dir }}/{{ nameVM }}.qcow2,format=qcow2
+        --disk path={{ SSR_dir }}/cidata.iso,device=cdrom
+        --os-variant centos7.0
+        --network network=default,model=virtio
+        --network network=default,model=virtio
+        --network bridge=brmgnt,model=virtio
+        --network bridge=brlan,model=virtio
+        --import
+        --autoconsole none
+      tags: create_SSR_vm
+
+    - name: Copying Wifi files to host
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+      with_items:
+        - { src: '/home/rene/Documents/rage-rmv/WiFi/user-data', dest: '{{ WiFi_dir }}' }
+        - { src: '/home/rene/Documents/rage-rmv/WiFi/meta-data', dest: '{{ WiFi_dir }}' }
+      tags: copy_WiFi_files
+
+    - name: Generate WiFi ISO image
+      command: "genisoimage -output {{ WiFi_dir }}/cidata.iso -V cidata -r -J {{ WiFi_dir }}//user-data {{ WiFi_dir }}/meta-data "
+      tags: generate_WiFi_CIS_iso
+
+    - name: Download cloud image
+      get_url:
+        url: "http://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+        dest: "{{ WiFi_dir}}/ubuntu.img"
+      tags: Download_cloudImage
+
+    - name:  Generate image
+      command: >
+        qemu-img create -F qcow2 -b {{ WiFi_dir }}/ubuntu.img -f qcow2 {{ WiFi_dir }}/{{ vm_name }}.qcow2 20G
+      tags: generate_WiFi_iso
+  
+    - name: Create Wifi VM using virt-install
+      command: >
+        virt-install
+        --name  {{ vm_name }}
+        --autostart 
+        --ram 2048
+        --vcpus 2
+        --disk path={{ WiFi_dir }}/{{ vm_name }}.qcow2,format=qcow2
+        --disk path={{ WiFi_dir }}/cidata.iso,device=cdrom
+        --os-variant ubuntu20.04
+        --network bridge=brlan,model=virtio
+        --import
+        --autoconsole none
+      async: 120
+      poll: 60
+      tags: create_WiFi_vm
+
+    - name: Install Nginx
+      apt:
+        name: nginx
+        state: present
+      tags: Install_Nginx
+
+    - name: Ensure Nginx service is started and enabled
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+      tags: check_service
+
+    - name: Create Nginx directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ sites_available }}"
+        - "{{ sites_enabled }}"
+      tags:
+        - create_Nginx_directories
+
+    - name: Create Nginx virtual host configuration for landing page
+      template:
+        src: site-templates/nginx_vm_info.conf.j2
+        dest: "{{ sites_available }}/nginx_vm_info.conf"
+      notify:
+        - Reload Nginx
+      tags: host_landing_page
+
+    - name: Enable Nginx virtual host configuration
+      file:
+        src: "{{ sites_available }}/nginx_vm_info.conf"
+        dest: "{{ sites_enabled }}/nginx_vm_info.conf"
+        state: link
+      tags: enable_nginx
+
+    - name: Gather KVM VM information using virsh
+      command: virsh list --all
+      register: kvm_vm_list
+      tags: Info_vm
+
+    - name: Create landing page with VM information
+      template:
+        src: site-templates/landing_page.html.j2
+        dest: /var/www/html/index.html
+        mode: '0644'
+      tags: create_landing
+
+    - name: Append KVM VM details to landing page
+      lineinfile:
+        path: /var/www/html/index.html
+        line: "<li>{{ item }}</li>"
+        insertafter: "<ul>"
+        regexp: "<ul>"
+        backrefs: yes
+      loop: "{{ kvm_vm_list.stdout_lines }}"
+      tags: updatelanding
+
+  handlers:
+    - name: Reload Nginx
+      service:
+        name: nginx
+        state: reloaded
+      

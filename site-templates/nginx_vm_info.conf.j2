@@ -1,0 +1,10 @@
+server {
+    listen 192.168.122.20:80;
+    listen 192.168.0.3:80;
+    server_name localhost;
+
+    location / {
+        root /var/www/html;
+        index index.html;
+    }
+}

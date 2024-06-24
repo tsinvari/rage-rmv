@@ -1,0 +1,8 @@
+version: 1
+config:
+- type: physical
+  name: eth0
+- type: physical
+  name: ge-0-0
+  subnets:
+  - type: dhcp

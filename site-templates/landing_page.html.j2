@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>KVM VM Information</title>
+</head>
+<body>
+    <h1>KVM Virtual Machines</h1>
+    <ul>
+    {% for vm in kvm_vm_list.stdout_lines %}
+        <li>{{ vm }}</li>
+    {% endfor %}
+    </ul>
+</body>
+</html>
