@@ -29,6 +29,8 @@
           network:
             version: 2
             ethernets:
+              enp0s31f6:
+                dhcp4: false
               enp1s0:
                 dhcp4: false
               enp2s0:
@@ -39,54 +41,41 @@
                 dhcp4: false
               enp5s0:
                 dhcp4: false
-              enp6s0:
-                dhcp4: false
             bridges:
               brwan0:
                 interfaces:
                   - enp1s0
                 addresses:
-                  - 192.168.122.20/24
+                  - 192.168.35.247/24
                 routes: 
                   - to: default
-                    via: 192.168.122.1
+                    via: 192.168.35.27
                 nameservers:
                   addresses:
                     - 8.8.8.8
                     - 8.8.4.4
               brwan1:
                 interfaces:
-                  - enp2s0
-                dhcp4: true
+                  - enp0s31f6
+                dhcp4: false
               brmgnt:
                 interfaces:
+                  - enp2s0
                   - enp3s0
-                  - enp4s0
                 addresses:
-                  - 192.168.0.3/24
+                  - 192.168.0.2/28
               brlan:
                 interfaces:
+                  - enp4s0
                   - enp5s0
-                  - enp6s0
                 addresses:
-                  - 192.168.12.99/24
+                  - 192.168.4.67/28
                 dhcp4: false
       tags: apply_netplan
 
     - name: Apply Netplan configuration
       command: netplan apply
       tags: apply_netplan
-
-    - name: Create directories
-      file:
-        path: "{{ item }}"
-        state: directory
-        mode: '0755'
-      loop:
-        - "{{ SSR_dir }}"
-        - "{{ WiFi_dir }}"
-      tags:
-        - create_directories
 
     - name: Update apt packages
       apt:
@@ -111,6 +100,17 @@
         state: present
         update_cache: yes
       tags: install_kvm
+
+    - name: Create directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ SSR_dir }}"
+        - "{{ WiFi_dir }}"
+      tags:
+        - create_directories
 
     - name: Add user to libvirt group
       user:
@@ -168,7 +168,7 @@
         dest: "{{ item.dest }}"
       with_items:
         - { src: "{{ hostvars[inventory_hostname]['SSRimage'] }}", dest: '{{ SSR_dir }}/{{ nameVM }}.qcow2' }
-        - { src: '/home/rene/Documents/rage-rmv/SSR/network-config', dest: '{{ SSR_dir }}' }
+        - { src: 'SSR/network-config', dest: '{{ SSR_dir }}' }
       tags: copy_SSR_files
 
     - name: Generate SSR ISO image
@@ -198,8 +198,8 @@
         src: "{{ item.src }}"
         dest: "{{ item.dest }}"
       with_items:
-        - { src: '/home/rene/Documents/rage-rmv/WiFi/user-data', dest: '{{ WiFi_dir }}' }
-        - { src: '/home/rene/Documents/rage-rmv/WiFi/meta-data', dest: '{{ WiFi_dir }}' }
+        - { src: 'WiFi/user-data', dest: '{{ WiFi_dir }}' }
+        - { src: 'WiFi/meta-data', dest: '{{ WiFi_dir }}' }
       tags: copy_WiFi_files
 
     - name: Generate WiFi ISO image
@@ -227,7 +227,7 @@
         --disk path={{ WiFi_dir }}/{{ vm_name }}.qcow2,format=qcow2
         --disk path={{ WiFi_dir }}/cidata.iso,device=cdrom
         --os-variant ubuntu20.04
-        --network bridge=brlan,model=virtio
+        --network network=default,model=virtio
         --import
         --autoconsole none
       async: 120

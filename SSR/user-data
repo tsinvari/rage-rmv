@@ -14,4 +14,6 @@ write_files:
 runcmd:
 - initialize128t -p /root/initializer-preferences.json
 - /bin/rm -f /etc/sysconfig/network-scripts/ifcfg-eth0
+- systemctl enable 128T
+- systemctl start 128T
 - /usr/bin/sync;/usr/bin/sync;/usr/sbin/shutdown -r
